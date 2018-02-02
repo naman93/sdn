@@ -19,6 +19,8 @@ public class Neighbor implements Serializable {
 	Integer linkDelay;
 	//link status;
 	Boolean linkStatus;
+	//link status timestamp
+	long linkStatusTimestamp;
 	
 	//constructor
 	public Neighbor() {
@@ -26,5 +28,6 @@ public class Neighbor implements Serializable {
 		linkBw = -1;
 		linkDelay = -1;
 		linkStatus = false;
+		linkStatusTimestamp = -1;
 	}
 }

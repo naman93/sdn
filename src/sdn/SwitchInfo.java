@@ -16,6 +16,8 @@ public class SwitchInfo implements Serializable {
 	Integer port;
 	//alive status
 	Boolean alive;
+	//alive timestamp
+	long aliveTimestamp;
 	//information about neighbors
 	HashMap<Integer, Neighbor> neighbors;
 	//information about next hop for routing
@@ -27,6 +29,7 @@ public class SwitchInfo implements Serializable {
 		ipAddress = null;
 		port = -1;
 		alive = false;
+		aliveTimestamp = -1;
 		neighbors = new HashMap<Integer, Neighbor>();
 		nextHop = new HashMap<Integer, Integer>();
 	}

@@ -27,7 +27,7 @@ public class Controller {
 		catch (SocketException e) {
 			e.printStackTrace();
 			System.exit(1);
-		}		
+		}
 		//create a HashMap instance
 		switches = new HashMap<Integer, SwitchInfo>();
 		//read the topology file and populate "switches" HashMap
@@ -106,6 +106,23 @@ public class Controller {
 		}
 	}
 	
+	//nested class
+	//watchdog thread implementation
+	private class WatchdogThread implements Runnable {
+		public void run() {
+			try {
+				while (true) {
+					Thread.sleep(2000);
+					log("hello world !", Verbosity.HIGH);
+				}
+			}
+			catch (InterruptedException e) {
+				e.printStackTrace();
+				System.exit(1);
+			}
+		}
+	}
+	
 	//main
 	public static void main(String[] args) {		
 		if (args.length != 3) {
@@ -114,30 +131,44 @@ public class Controller {
 		}
 		//create a controller object
 		Controller controller = new Controller(Integer.valueOf(args[0]), args[1], args[2]);
+		controller.log("main: Controller object created", Verbosity.HIGH);
 		//bootstrap
 		controller.bootstrap();
+		//start the watchdog thread
+		Controller.WatchdogThread wdt = controller.new WatchdogThread(); 
+		Thread t = new Thread(wdt);
+		t.start();
+		//infinite loop
+		controller.log("main: starting infinite loop", Verbosity.MEDIUM);
+		while(true) {
+			//receive incoming messages
+			Message msg = controller.receiveMessage();
+			controller.log("main: received " + msg.header + " message from switch: " + msg.switchId, Verbosity.HIGH);
+			//handle the received message
+			controller.handleMessage(msg);
+		}
 	}
 	
 	//function that ensures that controller performs bootstrap (waits for all the switches in the topology to register)
 	private void bootstrap()  {
-		log("Bootstrap Started", Verbosity.HIGH);
+		log("bootstrap: Bootstrap Started", Verbosity.MEDIUM);
 		//create a hash set with all the switch ids that have not registered yet.
 		HashSet<Integer> unregisteredSwitches = new HashSet<Integer>();
 		//add all the keys
 		for (Integer id : switches.keySet()) {
 			unregisteredSwitches.add(id);
 		}
-		log("Waiting for all switches to register", Verbosity.HIGH);
+		log("bootstrap: Waiting for all switches to register", Verbosity.MEDIUM);
 		//wait until all the switches register
 		while(!unregisteredSwitches.isEmpty()) {
 			//read a message from socket
 			Message msg = receiveMessage();
 			//check if a register request message was received
 			if (msg.header.equals("REGISTER_REQUEST")) {
-				log("received register request", Verbosity.HIGH);
+				log("bootstrap: received register request from switch: "+msg.switchId.toString(), Verbosity.MEDIUM);
 				//set the alive status of the switch which sent register request to true
 				(switches.get(msg.switchId)).alive = true;
-				log("Controller: sending response", Verbosity.HIGH);
+				log("bootstrap: sending register response", Verbosity.MEDIUM);
 				//prepare a message to send as response to the switch
 				Message responseMessage = new Message(msg.switchId, "REGISTER_RESPONSE", switches.get(msg.switchId));
 				//send the response
@@ -146,6 +177,25 @@ public class Controller {
 				unregisteredSwitches.remove(msg.switchId);
 			}
 		}
+		//perform route computations
+		computeRoute();
+		//send the updated routing information to all switches
+		for (Integer id : switches.keySet()) {
+			log("routeUpdate: sending route update to switch: "+id.toString(), Verbosity.HIGH);
+			Message msg = new Message(id, "ROUTE_UPDATE", switches.get(id));
+			sendMessage(msg);
+		}
+		log("bootstrap: sent route update to all switches", Verbosity.MEDIUM);
+		log("bootstrap: Bootstrap done", Verbosity.LOW);
+	}
+	
+	private void computeRoute() {
+		//TODO: implement widest path algorithm
+	}
+	
+	//function to handle incoming messages
+	private void handleMessage(Message msg) {
+		//TODO: implement handleMessage function
 	}
 	
 	//function to read  a message from socket
@@ -156,7 +206,9 @@ public class Controller {
 		byte[] buf = new byte[2048];
 		try {
 			DatagramPacket packet = new DatagramPacket(buf, buf.length);
+			log("receiveMessage: waiting to receive a data packet", Verbosity.HIGH);
 			socket.receive(packet);
+			log("receiveMessage: received a data packet", Verbosity.HIGH);
 			//create a bytearray input stream
 			ByteArrayInputStream inStr = new ByteArrayInputStream(buf);
 			//create object input stream
@@ -166,9 +218,10 @@ public class Controller {
 			//(if not already populated)
 			Integer switchId = msg.switchId;
 			if (switches.containsKey(switchId)) {
-				//check if IP address is already populated
-				SwitchInfo swInfo = switches.get(switchId);
-				if (swInfo.ipAddress == null) {
+				//update the ip address and port
+				//synchronized block
+				synchronized (switches) {
+					SwitchInfo swInfo = switches.get(switchId);
 					swInfo.ipAddress = packet.getAddress();
 					swInfo.port = packet.getPort();
 					//update the IP and port address in the neighbor information
@@ -182,12 +235,12 @@ public class Controller {
 						else {}
 					}
 				}
-				else;
 			}
 			else {
 				//we did not expect to get a message from a switch with this ID
-				//(switch not persent in the topology map)
+				//(switch not present in the topology map)
 				System.out.println("Message received from an unknown switch. Switch ID = " + switchId);
+				System.out.println("Exiting !");
 				System.exit(1);
 			}
 	    }
@@ -199,6 +252,7 @@ public class Controller {
 	      e.printStackTrace();
 	      System.exit(1);
 		}
+		log("receiveMessage: returning message object", Verbosity.HIGH);
 	    return msg;
 	}
 	
@@ -213,7 +267,12 @@ public class Controller {
 	        oos.writeObject(msg);
 	        //construct a packet
 	        DatagramPacket packet = new DatagramPacket(byteStream.toByteArray(), byteStream.size(), msg.swInfo.ipAddress, msg.swInfo.port);
-	        socket.send(packet);
+	        log("sendMessage: sending a data packet", Verbosity.HIGH);
+	        //synchronized block
+	        synchronized (socket) {
+	        		socket.send(packet);
+	        }
+	        log("sendMessage: sent a data packet", Verbosity.HIGH);
 		}
 		catch (IOException e) {
 			e.printStackTrace();
@@ -222,15 +281,15 @@ public class Controller {
 	}
 	
 	//function that implements logging functionality
-	private void log(String str, Verbosity ver) {
+	private synchronized void log(String str, Verbosity ver) {
 		if (logVerbosity == Verbosity.HIGH) {
-			System.out.println(str);
+			System.out.println("[" + System.currentTimeMillis() + "]: " + str);
 		}
 		else if ((logVerbosity == Verbosity.MEDIUM) && (ver != Verbosity.HIGH)) {
-			System.out.println(str);
+			System.out.println("[" + System.currentTimeMillis() + "]: " + str);
 		}
 		else if ((logVerbosity == Verbosity.LOW) && (ver == Verbosity.LOW)) {
-			System.out.println(str);
+			System.out.println("[" + System.currentTimeMillis() + "]: " + str);
 		}
 		else {}
 	}
