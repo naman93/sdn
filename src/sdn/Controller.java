@@ -15,6 +15,12 @@ public class Controller {
 	private HashMap<Integer, SwitchInfo> switches;
 	//controller socket
 	private DatagramSocket socket;
+	//watchdog thread sleep duration
+	private static final Integer wdtSleepMillis = 3000;
+	//number of cycles to wait before declaring a switch dead
+	private static final Integer waitCycles = 4;
+	//duration beyond with a switch is declared dead
+	private static final float maxDuration = wdtSleepMillis * waitCycles;
 	//logging verbosity
 	private Verbosity logVerbosity;
 	
@@ -47,7 +53,9 @@ public class Controller {
             			//create an entry for each switch in the hashmap
             			Integer numSwitches = Integer.valueOf(line);
             			for (int i=1; i<=numSwitches; i++) {
-            				switches.put(i, new SwitchInfo());
+            				SwitchInfo info = new SwitchInfo();
+            				info.id = i;
+            				switches.put(i, info);
             			}
             			//number of switches in the topology has been read
             			numSwitchesRead = true;
@@ -112,8 +120,38 @@ public class Controller {
 		public void run() {
 			try {
 				while (true) {
-					Thread.sleep(2000);
-					log("hello world !", Verbosity.HIGH);
+					Thread.sleep(wdtSleepMillis);
+					//TODO: check if each switch is still alive (define time intervals)
+					//TODO: if going to declare as not alive, call route computation function and send ROUTE_UPDATE messages
+					//get the current time
+					long currentTime = System.currentTimeMillis();
+					//boolean to keep track if the status of any switch changed
+					Boolean aliveStatusChange = false;
+					synchronized (switches) {
+						//check the timestamp recorded in each switch against the current time
+						for (Integer id : switches.keySet()) {
+							if ((currentTime - switches.get(id).aliveTimestamp) > maxDuration) {
+								//mark switch as dead
+								switches.get(id).alive = false;
+								aliveStatusChange = true;
+							}
+							else {}
+						}
+					}
+					//check if the alive status of any of the switches changed
+					if (aliveStatusChange) {
+						//compute routes
+						computeRoute();
+						//send route update to all switches
+						synchronized (switches) {
+							for (Integer id : switches.keySet()) {
+								log("watchdog thread: sending route update to switch: "+id.toString(), Verbosity.MEDIUM);
+								Message msg = new Message(id, "ROUTE_UPDATE", switches.get(id));
+								sendMessage(msg);
+							}
+						}
+					}
+					else {}
 				}
 			}
 			catch (InterruptedException e) {
@@ -143,7 +181,7 @@ public class Controller {
 		while(true) {
 			//receive incoming messages
 			Message msg = controller.receiveMessage();
-			controller.log("main: received " + msg.header + " message from switch: " + msg.switchId, Verbosity.HIGH);
+			controller.log("main: received " + msg.header + " message from switch: " + msg.switchId, Verbosity.MEDIUM);
 			//handle the received message
 			controller.handleMessage(msg);
 		}
@@ -181,21 +219,90 @@ public class Controller {
 		computeRoute();
 		//send the updated routing information to all switches
 		for (Integer id : switches.keySet()) {
-			log("routeUpdate: sending route update to switch: "+id.toString(), Verbosity.HIGH);
+			log("bootstrap: sending route update to switch: "+id.toString(), Verbosity.MEDIUM);
 			Message msg = new Message(id, "ROUTE_UPDATE", switches.get(id));
 			sendMessage(msg);
 		}
 		log("bootstrap: sent route update to all switches", Verbosity.MEDIUM);
+		//set the alive timestamp of all switches to current time
+		log("bootstrap: setting the alive time stamp of all switches to current time", Verbosity.MEDIUM);
+		for (Integer id : switches.keySet()) {
+			switches.get(id).aliveTimestamp = System.currentTimeMillis();
+		}
 		log("bootstrap: Bootstrap done", Verbosity.LOW);
 	}
 	
 	private void computeRoute() {
-		//TODO: implement widest path algorithm
+		//TODO: implement widest path algorithm (synchronize on switches object while updating the information)
 	}
 	
 	//function to handle incoming messages
 	private void handleMessage(Message msg) {
-		//TODO: implement handleMessage function
+		//TODO: implement this function (ensure to lock on switches object whenever modifications are made)
+		//check the header to determine the type of message received
+		//TOPOLOGY_UPDATE
+		if (msg.header.equals("TOPOLOGY_UPDATE")) {
+			//boolean variable to keep track if any link status changed
+			Boolean linkStatusChange = false;
+			//synchronized block
+			synchronized(switches) {
+				SwitchInfo info = switches.get(msg.switchId);
+				//mark switch as alive
+				info.alive = true;
+				//update the timestamp information
+				info.aliveTimestamp = System.currentTimeMillis();
+				//store the data about neighbors sent by the switch
+				//TODO: check if any link that was alive has now gone down or vice versa
+				//TODO: if that is the case, then call route computation and send "ROUTE_UPDATE" to all switches
+				//iterate through all the neighbors of the switch and check if there is a change in link status
+				for(Integer id : info.neighbors.keySet()) {
+					if (info.neighbors.get(id).linkStatus.equals(msg.swInfo.neighbors.get(id).linkStatus)) {}
+					else {
+						linkStatusChange = true;
+						info.neighbors.get(id).linkStatus = msg.swInfo.neighbors.get(id).linkStatus;
+					}
+				}
+			}
+			//check if we need to perform route computation
+			if (linkStatusChange) {
+				computeRoute();
+				synchronized (switches) {
+					//send route update to all switches
+					for (Integer id : switches.keySet()) {
+						log("routeUpdate: sending route update to switch: "+id.toString(), Verbosity.MEDIUM);
+						Message routeUpdateMsg = new Message(id, "ROUTE_UPDATE", switches.get(id));
+						sendMessage(routeUpdateMsg);
+					}
+				}
+			}
+		}
+		//REGISTER_REQUEST
+		else if (msg.header.equals("REGISTER_REQUEST") ) {
+			synchronized (switches) {
+				//set the switch status to alive
+				SwitchInfo info = switches.get(msg.switchId);
+				info.alive = true;
+				//set the timestamp value
+				info.aliveTimestamp = System.currentTimeMillis();
+				//send back a register response
+				Message responseMessage = new Message(msg.switchId, "REGISTER_RESPONSE", switches.get(msg.switchId));
+				//send the response
+				sendMessage(responseMessage);
+			}
+			//perform route computations
+			computeRoute();
+			//send route update to all switches
+			synchronized (switches) {
+				//send route update to all switches
+				for (Integer id : switches.keySet()) {
+					log("routeUpdate: sending route update to switch: "+id.toString(), Verbosity.MEDIUM);
+					Message routeUpdateMsg = new Message(id, "ROUTE_UPDATE", switches.get(id));
+					sendMessage(routeUpdateMsg);
+				}
+			}
+		}
+		//ignore unknown message
+		else {}
 	}
 	
 	//function to read  a message from socket
