@@ -260,6 +260,8 @@ public class Controller {
 					HashMap<Integer, Integer> cost = new HashMap<Integer, Integer>();
 					//hashmap to store the parent of each node
 					HashMap<Integer, Integer> parent = new HashMap<Integer, Integer>();
+					//hashmap to store the next hop information for the given switch
+					HashMap<Integer, Integer> nextHop = new HashMap<Integer, Integer>();
 					//hashset to store the switches that have already been looked at
 					HashSet<Integer> seen = new HashSet<Integer>();
 					//populate cost and parent hashmaps with root node
@@ -307,7 +309,23 @@ public class Controller {
 						}
 					}
 					//construct the next hop map using the parent map
-					//TODO: compute next hop nodes and save it
+					for (Integer swId : parent.keySet()) {
+						if (parent.get(swId).equals(0)) {
+							continue;
+						}
+						else {
+							Integer node = swId;
+							Integer prevNode = null;
+							while(!parent.get(node).equals(0)) {
+								prevNode = node;
+								node = parent.get(node);
+							}
+							//add next hop information
+							nextHop.put(swId, prevNode.intValue());
+						}
+					}
+					//store the nextHop hashmap
+					switches.get(id).nextHop = nextHop;
 				}
 				else {}
 			}
