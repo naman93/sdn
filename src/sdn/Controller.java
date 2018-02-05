@@ -133,6 +133,12 @@ public class Controller {
 							if (switches.get(id).alive.equals(true) && ((currentTime - switches.get(id).aliveTimestamp) > maxDuration)) {
 								//mark switch as dead
 								switches.get(id).alive = false;
+								//mark all links going to dead switch as dead
+								for (Integer swId : switches.keySet()) {
+									if (switches.get(swId).neighbors.containsKey(id)) {
+										switches.get(swId).neighbors.get(id).linkStatus = false;
+									}
+								}
 								log("watchdog thread: following switch is dead: "+id.toString(), Verbosity.MEDIUM);
 								aliveStatusChange = true;
 							}
@@ -146,9 +152,12 @@ public class Controller {
 						//send route update to all switches
 						synchronized (switches) {
 							for (Integer id : switches.keySet()) {
-								log("watchdog thread: sending route update to switch: "+id.toString(), Verbosity.MEDIUM);
-								Message msg = new Message(id, "ROUTE_UPDATE", switches.get(id));
-								sendMessage(msg);
+								if (switches.get(id).alive) {
+									log("watchdog thread: sending route update to switch: "+id.toString(), Verbosity.MEDIUM);
+									Message msg = new Message(id, "ROUTE_UPDATE", switches.get(id));
+									sendMessage(msg);
+								}
+								else {}
 							}
 						}
 					}
@@ -208,6 +217,12 @@ public class Controller {
 				log("bootstrap: received register request from switch: "+msg.switchId.toString(), Verbosity.MEDIUM);
 				//set the alive status of the switch which sent register request to true
 				(switches.get(msg.switchId)).alive = true;
+				//set the link status of all links whose destination is "msg.switchId" to true
+				for (Integer swId : switches.keySet()) {
+					if (switches.get(swId).neighbors.containsKey(msg.switchId)) {
+						switches.get(swId).neighbors.get(msg.switchId).linkStatus = true;
+					}
+				}
 				log("bootstrap: sending register response", Verbosity.MEDIUM);
 				//prepare a message to send as response to the switch
 				Message responseMessage = new Message(msg.switchId, "REGISTER_RESPONSE", switches.get(msg.switchId));
@@ -235,9 +250,68 @@ public class Controller {
 	}
 	
 	private void computeRoute() {
-		//TODO: implement widest path algorithm (synchronize on switches object while updating the information)
-		//TODO: synchronize on switches while accessing data
 		log("computeRoute: computing widest path routes", Verbosity.MEDIUM);
+		synchronized (switches) {
+			//iterate over all the switches in the topology
+			for (Integer id : switches.keySet()) {
+				//check if switch is alive
+				if(switches.get(id).alive) {
+					//hashmap to store the cost(bandwidth) to next hop switches
+					HashMap<Integer, Integer> cost = new HashMap<Integer, Integer>();
+					//hashmap to store the parent of each node
+					HashMap<Integer, Integer> parent = new HashMap<Integer, Integer>();
+					//hashset to store the switches that have already been looked at
+					HashSet<Integer> seen = new HashSet<Integer>();
+					//populate cost and parent hashmaps with root node
+					//store the maximum cost for the root switch (so that it is picked first)
+					cost.put(id, Integer.MAX_VALUE);
+					//set the parent id to 0 (parent unknown)
+					parent.put(id, 0);
+					//iterate until the cost hashmap is empty
+					while(! cost.isEmpty()) {
+						//get the switch with maximum cost out of the hashmap
+						Integer maxCostId = 0;
+						Integer maxCost = 0;
+						for (Integer swId : cost.keySet()) {
+							if (cost.get(swId).compareTo(maxCost) > 0) {
+								maxCostId = swId.intValue();
+								maxCost = cost.get(swId);
+							}
+						}
+						//remove the switch with maximum cost (BW) from the hashmap
+						cost.remove(maxCostId);
+						//add to set of switches have already been looked at
+						seen.add(maxCostId);
+						//check the BW of links to neighbors
+						for (Integer swId : switches.get(maxCostId).neighbors.keySet()) {
+							//check if the link has not been looked at and is alive
+							if (!seen.contains(swId) && switches.get(maxCostId).neighbors.get(swId).linkStatus) {
+								//check if the neighbor is already present in the cost hashmap
+								if (cost.containsKey(swId)) {
+									//if the cost is greater then existing cost, then replace it
+									if (switches.get(maxCostId).neighbors.get(swId).linkBw.compareTo(cost.get(swId)) > 0) {
+										cost.put(swId, switches.get(maxCostId).neighbors.get(swId).linkBw);
+										//set parent
+										parent.put(swId, maxCostId);
+									}
+									else {}
+								}
+								else {
+									//add the switch id to the cost hashmap
+									cost.put(swId, switches.get(maxCostId).neighbors.get(swId).linkBw);
+									//set parent
+									parent.put(swId, maxCostId);
+								}
+							}
+							else {}
+						}
+					}
+					//construct the next hop map using the parent map
+					//TODO: compute next hop nodes and save it
+				}
+				else {}
+			}
+		}
 	}
 	
 	//function to handle incoming messages
@@ -283,6 +357,12 @@ public class Controller {
 				//set the switch status to alive
 				SwitchInfo info = switches.get(msg.switchId);
 				info.alive = true;
+				//mark all links going to newly registered switch as alive
+				for (Integer swId : switches.keySet()) {
+					if (switches.get(swId).neighbors.containsKey(msg.switchId)) {
+						switches.get(swId).neighbors.get(msg.switchId).linkStatus = true;
+					}
+				}
 				//set the timestamp value
 				info.aliveTimestamp = System.currentTimeMillis();
 				//send back a register response
@@ -336,8 +416,8 @@ public class Controller {
 					//update the IP and port address in the neighbor information
 					for (Integer id : switches.keySet()) {
 						HashMap<Integer, Neighbor> neighbors = (switches.get(id)).neighbors;
-						if (neighbors.containsKey(id)) {
-							Neighbor nb = neighbors.get(id);
+						if (neighbors.containsKey(switchId)) {
+							Neighbor nb = neighbors.get(switchId);
 							nb.ipAddress = packet.getAddress();
 							nb.port = packet.getPort();
 						}

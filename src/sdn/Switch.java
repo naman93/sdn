@@ -3,6 +3,7 @@ package sdn;
 import java.io.*;
 import java.util.*;
 import java.net.*;
+
 public class Switch {
  private DatagramSocket socket;
  private SwitchInfo info;
@@ -13,13 +14,25 @@ public class Switch {
  private static final Integer waitCycles = 4;
  //duration beyond with a switch is declared dead
  private static final float maxDuration = wdtSleepMillis * waitCycles;
+ //logging verbosity
+ private Verbosity logVerbosity;
  
-public Switch(Integer id, String ControllerAddr,Integer Cntrlport) throws UnknownHostException {
- ControllerPort = Cntrlport;
- ControllerAddress = InetAddress.getByName(ControllerAddr);
- info = new SwitchInfo();
- info.id = id;
+public Switch(Integer id, String ControllerAddr,Integer Cntrlport, String verbosity) throws UnknownHostException {
+	ControllerPort = Cntrlport;
+	ControllerAddress = InetAddress.getByName(ControllerAddr);
+	info = new SwitchInfo();
+	info.id = id;
  info.alive = true;
+	//set the logging verbosity
+	if (verbosity.equals("HIGH")) {
+		logVerbosity = Verbosity.HIGH;
+	}
+	else if (verbosity.equals("MEDIUM")) {
+		logVerbosity = Verbosity.MEDIUM;
+	}
+	else {
+		logVerbosity = Verbosity.LOW;
+	}
 try {
     socket = new DatagramSocket();
 }
@@ -33,8 +46,8 @@ catch (SocketException e) {
  private class WatchdogThread implements Runnable {
   public void run() {
    try {
+	System.out.println("started watchdog thread");
     while (true) {
-     Thread.sleep(wdtSleepMillis);
      //get the current time
      long currentTime = System.currentTimeMillis();
      
@@ -47,13 +60,13 @@ catch (SocketException e) {
        if (info.neighbors.get(id).linkStatus.equals(true) && ((currentTime - info.neighbors.get(id).linkStatusTimestamp) > maxDuration)) {
         //mark switch as dead
         info.neighbors.get(id).linkStatus = false;
-        //log("watchdog thread: following switch is dead: "+id.toString(), Verbosity.MEDIUM);
+        System.out.println("marked link to following switch as dead: "+ id);
         
        }
        else {
     	   //check if we the neighboring switch info
     	   	if (info.neighbors.get(id).ipAddress != null && info.neighbors.get(id).linkStatus.equals(true)) {
-    	   		System.out.println("Sending keep alive");
+    	   		System.out.println("Sending keep alive to switch: " + id);
     	   		Message msg = new Message(info.id,"KEEP_ALIVE",info);
     	   		sendMessage(msg,id);
     	   	}
@@ -62,11 +75,13 @@ catch (SocketException e) {
      }
      
      synchronized(info) {
+    	 System.out.println("sending topology update");
       Message msg = new Message(info.id, "TOPOLOGY_UPDATE", info);
       sendMessage(msg,0);
      }
      
      
+     Thread.sleep(wdtSleepMillis);
     }
    }
    catch (InterruptedException e) {
@@ -76,7 +91,7 @@ catch (SocketException e) {
   }
  }
 public static void main(String[] argv) throws IOException {
- Switch switc = new Switch(Integer.valueOf(argv[0]), argv[1], Integer.valueOf(argv[2]));
+ Switch switc = new Switch(Integer.valueOf(argv[0]), argv[1], Integer.valueOf(argv[2]), argv[3]);
  switc.bootstrap();
  Switch.WatchdogThread wdt = switc.new WatchdogThread();
  Thread t = new Thread(wdt);
@@ -91,6 +106,13 @@ public static void main(String[] argv) throws IOException {
   Message msg = new Message(info.id,"REGISTER_REQUEST", info);
   sendMessage(msg,0);
   Message mssg = receiveMessage();
+  System.out.println("received register response");
+  //for all the neighboring links that are marked alive, set the timestamp to current time
+  for (Integer id : mssg.swInfo.neighbors.keySet()) {
+	  if (mssg.swInfo.neighbors.get(id).linkStatus) {
+		  mssg.swInfo.neighbors.get(id).linkStatusTimestamp = System.currentTimeMillis();
+	  }
+  }
   info = mssg.swInfo;
  }
  private void sendMessage(Message msg, Integer destid) {
@@ -151,8 +173,18 @@ public static void main(String[] argv) throws IOException {
   if (msg.header.equals("KEEP_ALIVE")) {
    synchronized(info) {
 	System.out.println("received keep alive from : " + msg.switchId);
-    info.neighbors.get(msg.switchId).linkStatus = true;
-    info.neighbors.get(msg.switchId).linkStatusTimestamp = System.currentTimeMillis();
+	//check if the link was earlier declared dead (if yes, send a topology update immediately)
+	if (info.neighbors.get(msg.switchId).linkStatus.equals(false)) {
+		info.neighbors.get(msg.switchId).linkStatus = true;
+		System.out.println("link from switch "+ info.id + " to " + msg.switchId + " is now alive");
+		System.out.println("sending topology update");
+		Message topologyUpdatemsg = new Message(info.id, "TOPOLOGY_UPDATE", info);
+		sendMessage(topologyUpdatemsg, 0);
+		info.neighbors.get(msg.switchId).linkStatusTimestamp = System.currentTimeMillis();
+	}
+	else {
+		info.neighbors.get(msg.switchId).linkStatusTimestamp = System.currentTimeMillis();
+	}
    }
   }
   else if (msg.header.equals("ROUTE_UPDATE")) {
@@ -162,6 +194,19 @@ public static void main(String[] argv) throws IOException {
    }
   }
  }
+ 
+ private synchronized void log(String str, Verbosity ver) {
+		if (logVerbosity == Verbosity.HIGH) {
+			System.out.println("[" + System.currentTimeMillis() + "]: " + str);
+		}
+		else if ((logVerbosity == Verbosity.MEDIUM) && (ver != Verbosity.HIGH)) {
+			System.out.println("[" + System.currentTimeMillis() + "]: " + str);
+		}
+		else if ((logVerbosity == Verbosity.LOW) && (ver == Verbosity.LOW)) {
+			System.out.println("[" + System.currentTimeMillis() + "]: " + str);
+		}
+		else {}
+	}
 }
   
   
