@@ -383,15 +383,17 @@ public class Controller {
 				//set the switch status to alive
 				SwitchInfo info = switches.get(msg.switchId);
 				info.alive = true;
-				//mark all links going to rejoined switch as alive
+				//mark all links going to rejoined switch from other alive switches as alive
 				for (Integer swId : switches.keySet()) {
-					if (switches.get(swId).neighbors.containsKey(msg.switchId)) {
+					if (switches.get(swId).alive && switches.get(swId).neighbors.containsKey(msg.switchId)) {
 						switches.get(swId).neighbors.get(msg.switchId).linkStatus = true;
 					}
 				}
-				//mark all outgoing links from the switch as alive
+				//mark all outgoing links from the switch to other alive switches as alive
 				for (Integer swId : switches.get(msg.switchId).neighbors.keySet()) {
-					switches.get(msg.switchId).neighbors.get(swId).linkStatus = true;
+					if (switches.get(swId).alive) {
+						switches.get(msg.switchId).neighbors.get(swId).linkStatus = true;
+					}
 				}
 				//set the timestamp value
 				info.aliveTimestamp = System.currentTimeMillis();
