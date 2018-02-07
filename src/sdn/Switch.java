@@ -53,7 +53,7 @@ public class Switch {
 			 try {
 				 
 				//System.out.println("started watchdog thread");
-				 log("Started watchdog thread", Verbosity.HIGH);
+				 log("WatchdogThread:Started watchdog thread", Verbosity.HIGH);
 			    while (true) {
 			     //get the current time
 				     long currentTime = System.currentTimeMillis();
@@ -65,16 +65,16 @@ public class Switch {
 			      //check the timestamp recorded in each switch against the current time if the switch is already alive
 					      for (Integer id : info.neighbors.keySet()) {
 					    	  if (info.neighbors.get(id).linkStatus.equals(true) && ((currentTime - info.neighbors.get(id).linkStatusTimestamp) > maxDuration)) {
-					        //mark switch as dead
+					        //mark switch link as false if the switch has not sent a keep alive message for a long duration
 							        info.neighbors.get(id).linkStatus = false;
-							        log("Marked link to the following switch as unavailable:"+id.toString(),Verbosity.LOW);
-							        log("Sending topology update after link from switch "+info.id.toString() + " to " + id.toString() + " is marked dead",Verbosity.LOW);
+							        log("WatchdogThread: Marked link to the following switch as unavailable:"+id.toString(),Verbosity.LOW);
+							        log("WatchdogThread: Sending topology update after link from switch "+info.id.toString() + " to " + id.toString() + " is marked dead",Verbosity.LOW);
 						        
 					    	  }
 						       else {
-						    	   //check if we the neighboring switch info
+						    	   //check  the neighboring switch info and send a keep alive if there exists a link
 						    	   	if (info.neighbors.get(id).ipAddress != null && info.neighbors.get(id).linkStatus.equals(true) && !deadLinks.contains(id)) {
-						    	   		log("Sending Keep alive to switch:"+id.toString(),Verbosity.HIGH);
+						    	   		log("WatchdogThread: Sending Keep alive to switch:"+id.toString(),Verbosity.HIGH);
 						    	   		//System.out.println("Sending keep alive to switch: " + id);
 						    	   		Message msg = new Message(info.id,"KEEP_ALIVE",info);
 						    	   		sendMessage(msg,id);
@@ -84,8 +84,9 @@ public class Switch {
 				     }
 		     
 				     synchronized(info) {
-				    	 log("Sending topology update",Verbosity.HIGH);
-				    	 //System.out.println("sending topology update");
+				    	 log("WatchdogThread: Sending topology update",Verbosity.HIGH);
+				    	 // periodic topology update messages
+					     //System.out.println("sending topology update");
 					      Message msg = new Message(info.id, "TOPOLOGY_UPDATE", info);
 					      sendMessage(msg,0);
 				     }
@@ -119,10 +120,10 @@ public class Switch {
 	}
 	private void bootstrap() {
 		  Message msg = new Message(info.id,"REGISTER_REQUEST", info);
-		  log("Sending Register Request from the switch"+info.id.toString(),Verbosity.LOW);
+		  log("bootstrap: Sending Register Request from the switch"+info.id.toString(),Verbosity.LOW);
 		  sendMessage(msg,0);
 		  Message mssg = receiveMessage();
-		  log("Received Register Response from the controller",Verbosity.LOW);
+		  log("bootstrap: Received Register Response from the controller",Verbosity.LOW);
 		  //System.out.println("received register response");
 		  //for all the neighboring links that are marked alive, set the timestamp to current time
 		  for (Integer id : mssg.swInfo.neighbors.keySet()) {
@@ -191,14 +192,14 @@ public class Switch {
 	private void handleMessage(Message msg) {
 		  if (msg.header.equals("KEEP_ALIVE")) {
 			  synchronized(info) {
-				  log("Received keep alive from switch:" + msg.switchId.toString(),Verbosity.HIGH);
+				  log("handleMessage: Received keep alive from switch:" + msg.switchId.toString(),Verbosity.HIGH);
 				  //System.out.println("received keep alive from : " + msg.switchId);
 			//check if the link was earlier declared dead (if yes, send a topology update immediately)
 					if (info.neighbors.get(msg.switchId).linkStatus.equals(false)) {
 						info.neighbors.get(msg.switchId).linkStatus = true;
-						log("Link from switch "+info.id.toString() + " to " + msg.switchId + " is now alive", Verbosity.LOW);
+						log("handleMessage: Link from switch "+info.id.toString() + " to " + msg.switchId + " is now alive", Verbosity.LOW);
 						//System.out.println("link from switch "+ info.id + " to " + msg.switchId + " is now alive");
-						log("Sending topology update after link from switch "+info.id.toString() + " to " + msg.switchId + " is marked alive",Verbosity.LOW);
+						log("handleMessage: Sending topology update after link from switch "+info.id.toString() + " to " + msg.switchId + " is marked alive",Verbosity.LOW);
 						//System.out.println("sending topology update");
 						Message topologyUpdatemsg = new Message(info.id, "TOPOLOGY_UPDATE", info);
 						sendMessage(topologyUpdatemsg, 0);
@@ -211,9 +212,10 @@ public class Switch {
 		  }
 		  else if (msg.header.equals("ROUTE_UPDATE")) {
 				 synchronized(info) {
-						log("Received Route Update",Verbosity.LOW);
-					    log ("Routing table : " + msg.swInfo.nextHop.toString(), Verbosity.LOW);
-					    info.nextHop = msg.swInfo.nextHop;
+					 //received a route update and store the next hop information
+						log("handleMessage: Received Route Update",Verbosity.LOW);
+						log ("handleMessage: Routing table : " + msg.swInfo.nextHop.toString(), Verbosity.LOW);
+						info.nextHop = msg.swInfo.nextHop;
 				 }
 		}
 	 }
