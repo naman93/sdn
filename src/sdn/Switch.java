@@ -5,17 +5,19 @@ import java.util.*;
 import java.net.*;
 
 public class Switch {
-	 private DatagramSocket socket;
-	 private SwitchInfo info;
-	 private InetAddress ControllerAddress;
-	 private Integer ControllerPort;
-	 private static final Integer wdtSleepMillis = 3000;
-	 //number of cycles to wait before declaring a switch dead
-	 private static final Integer waitCycles = 4;
-	 //duration beyond with a switch is declared dead
-	 private static final float maxDuration = wdtSleepMillis * waitCycles;
-	 //logging verbosity
-	 private Verbosity logVerbosity;
+	private DatagramSocket socket;
+	private SwitchInfo info;
+	private InetAddress ControllerAddress;
+	private Integer ControllerPort;
+	private static final Integer wdtSleepMillis = 3000;
+	//number of cycles to wait before declaring a switch dead
+	private static final Integer waitCycles = 4;
+	//duration beyond with a switch is declared dead
+	private static final float maxDuration = wdtSleepMillis * waitCycles;
+	//variable to keep track of links that are considered to be dead
+	private HashSet<Integer> deadLinks;
+	//logging verbosity
+	private Verbosity logVerbosity;
  
 	public Switch(Integer id, String ControllerAddr,Integer Cntrlport, String verbosity) throws UnknownHostException {
 	   	ControllerPort = Cntrlport;
@@ -23,6 +25,7 @@ public class Switch {
 		info = new SwitchInfo();
 		info.id = id;
 		info.alive = true;
+		deadLinks = new HashSet<Integer>();
 		//set the logging verbosity
 		if (verbosity.equals("HIGH")) {
 			logVerbosity = Verbosity.HIGH;
@@ -65,13 +68,13 @@ public class Switch {
 					        //mark switch as dead
 							        info.neighbors.get(id).linkStatus = false;
 							        log("Marked link to the following switch as unavailable:"+id.toString(),Verbosity.LOW);
-							        //System.out.println("marked link to following switch as dead: "+ id);
+							        log("Sending topology update after link from switch "+info.id.toString() + " to " + id.toString() + " is marked dead",Verbosity.LOW);
 						        
 					    	  }
 						       else {
 						    	   //check if we the neighboring switch info
-						    	   	if (info.neighbors.get(id).ipAddress != null && info.neighbors.get(id).linkStatus.equals(true)) {
-						    	   		log("Sending Keep alive to switch:"+id.toString(),Verbosity.MEDIUM);
+						    	   	if (info.neighbors.get(id).ipAddress != null && info.neighbors.get(id).linkStatus.equals(true) && !deadLinks.contains(id)) {
+						    	   		log("Sending Keep alive to switch:"+id.toString(),Verbosity.HIGH);
 						    	   		//System.out.println("Sending keep alive to switch: " + id);
 						    	   		Message msg = new Message(info.id,"KEEP_ALIVE",info);
 						    	   		sendMessage(msg,id);
@@ -99,6 +102,11 @@ public class Switch {
 		}
 	public static void main(String[] argv) throws IOException {
 		 Switch switc = new Switch(Integer.valueOf(argv[0]), argv[1], Integer.valueOf(argv[2]), argv[3]);
+		 if (argv.length > 4 && argv[4].equals("-f")) {
+			 for (int i=5; i<argv.length; i++) {
+				 switc.deadLinks.add(Integer.valueOf(argv[i]));
+			 }
+		 }
 		 switc.bootstrap();
 		 Switch.WatchdogThread wdt = switc.new WatchdogThread();
 		 Thread t = new Thread(wdt);
@@ -183,14 +191,14 @@ public class Switch {
 	private void handleMessage(Message msg) {
 		  if (msg.header.equals("KEEP_ALIVE")) {
 			  synchronized(info) {
-				  log("Received keep alive from switch:" + msg.switchId.toString(),Verbosity.LOW);
+				  log("Received keep alive from switch:" + msg.switchId.toString(),Verbosity.HIGH);
 				  //System.out.println("received keep alive from : " + msg.switchId);
 			//check if the link was earlier declared dead (if yes, send a topology update immediately)
 					if (info.neighbors.get(msg.switchId).linkStatus.equals(false)) {
 						info.neighbors.get(msg.switchId).linkStatus = true;
-						log("Link from switch"+info.id.toString() + "to" + msg.switchId + "is now alive", Verbosity.LOW);
+						log("Link from switch "+info.id.toString() + " to " + msg.switchId + " is now alive", Verbosity.LOW);
 						//System.out.println("link from switch "+ info.id + " to " + msg.switchId + " is now alive");
-						log("Sending Topology Update",Verbosity.LOW);
+						log("Sending topology update after link from switch "+info.id.toString() + " to " + msg.switchId + " is marked alive",Verbosity.LOW);
 						//System.out.println("sending topology update");
 						Message topologyUpdatemsg = new Message(info.id, "TOPOLOGY_UPDATE", info);
 						sendMessage(topologyUpdatemsg, 0);
@@ -204,7 +212,7 @@ public class Switch {
 		  else if (msg.header.equals("ROUTE_UPDATE")) {
 				 synchronized(info) {
 						log("Received Route Update",Verbosity.LOW);
-					 //System.out.println("received route update : ");
+					    log ("Routing table : " + msg.swInfo.nextHop.toString(), Verbosity.LOW);
 					    info.nextHop = msg.swInfo.nextHop;
 				 }
 		}

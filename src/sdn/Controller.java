@@ -362,9 +362,11 @@ public class Controller {
 				synchronized (switches) {
 					//send route update to all switches
 					for (Integer id : switches.keySet()) {
-						log("handleMessage: sending route update to switch: "+id.toString(), Verbosity.MEDIUM);
-						Message routeUpdateMsg = new Message(id, "ROUTE_UPDATE", switches.get(id));
-						sendMessage(routeUpdateMsg);
+						if (switches.get(id).alive) {
+							log("handleMessage: sending route update to switch: "+id.toString(), Verbosity.MEDIUM);
+							Message routeUpdateMsg = new Message(id, "ROUTE_UPDATE", switches.get(id));
+							sendMessage(routeUpdateMsg);
+						}
 					}
 				}
 			}
