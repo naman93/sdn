@@ -139,7 +139,7 @@ public class Controller {
 										switches.get(swId).neighbors.get(id).linkStatus = false;
 									}
 								}
-								log("watchdog thread: following switch is dead: "+id.toString(), Verbosity.MEDIUM);
+								log("watchdog thread: following switch is dead: "+id.toString(), Verbosity.LOW);
 								aliveStatusChange = true;
 							}
 							else {}
@@ -183,16 +183,16 @@ public class Controller {
 		//bootstrap
 		controller.bootstrap();
 		//start the watchdog thread
-		controller.log("main: starting watchdog thread", Verbosity.MEDIUM);
+		controller.log("main: starting watchdog thread", Verbosity.HIGH);
 		Controller.WatchdogThread wdt = controller.new WatchdogThread(); 
 		Thread t = new Thread(wdt);
 		t.start();
 		//infinite loop
-		controller.log("main: starting infinite loop in main", Verbosity.MEDIUM);
+		controller.log("main: starting infinite loop in main", Verbosity.HIGH);
 		while(true) {
 			//receive incoming messages
 			Message msg = controller.receiveMessage();
-			controller.log("main: received " + msg.header + " message from switch: " + msg.switchId, Verbosity.MEDIUM);
+			controller.log("main: received " + msg.header + " message from switch: " + msg.switchId, Verbosity.HIGH);
 			//handle the received message
 			controller.handleMessage(msg);
 		}
@@ -207,7 +207,7 @@ public class Controller {
 		for (Integer id : switches.keySet()) {
 			unregisteredSwitches.add(id);
 		}
-		log("bootstrap: waiting for all switches to register", Verbosity.MEDIUM);
+		log("bootstrap: waiting for all switches to register", Verbosity.HIGH);
 		//wait until all the switches register
 		while(!unregisteredSwitches.isEmpty()) {
 			//read a message from socket
@@ -240,7 +240,7 @@ public class Controller {
 			Message msg = new Message(id, "ROUTE_UPDATE", switches.get(id));
 			sendMessage(msg);
 		}
-		log("bootstrap: sent route update to all switches", Verbosity.MEDIUM);
+		log("bootstrap: sent route update to all switches", Verbosity.HIGH);
 		//set the alive timestamp of all switches to current time
 		log("bootstrap: setting the alive time stamp of all switches to current time", Verbosity.MEDIUM);
 		for (Integer id : switches.keySet()) {
@@ -250,7 +250,7 @@ public class Controller {
 	}
 	
 	private void computeRoute() {
-		log("computeRoute: computing widest path routes", Verbosity.MEDIUM);
+		log("computeRoute: computing widest path routes", Verbosity.HIGH);
 		synchronized (switches) {
 			//iterate over all the switches in the topology
 			for (Integer id : switches.keySet()) {
@@ -351,8 +351,14 @@ public class Controller {
 					if (info.neighbors.get(id).linkStatus.equals(msg.swInfo.neighbors.get(id).linkStatus)) {}
 					else {
 						linkStatusChange = true;
+						//set link from switch that sent message to destination switch link as dead
 						info.neighbors.get(id).linkStatus = msg.swInfo.neighbors.get(id).linkStatus;
-						log("handleMessage: link between switch " + msg.switchId + " and switch " + id.toString() + " is down", Verbosity.MEDIUM);
+						if (info.neighbors.get(id).linkStatus) {
+							log("handleMessage: link between switch " + msg.switchId + " and switch " + id.toString() + " is up", Verbosity.MEDIUM);
+						}
+						else {
+							log("handleMessage: link between switch " + msg.switchId + " and switch " + id.toString() + " is down", Verbosity.MEDIUM);
+						}
 					}
 				}
 			}
@@ -377,14 +383,20 @@ public class Controller {
 				//set the switch status to alive
 				SwitchInfo info = switches.get(msg.switchId);
 				info.alive = true;
-				//mark all links going to newly registered switch as alive
+				//mark all links going to rejoined switch as alive
 				for (Integer swId : switches.keySet()) {
 					if (switches.get(swId).neighbors.containsKey(msg.switchId)) {
 						switches.get(swId).neighbors.get(msg.switchId).linkStatus = true;
 					}
 				}
+				//mark all outgoing links from the switch as alive
+				for (Integer swId : switches.get(msg.switchId).neighbors.keySet()) {
+					switches.get(msg.switchId).neighbors.get(swId).linkStatus = true;
+				}
 				//set the timestamp value
 				info.aliveTimestamp = System.currentTimeMillis();
+				//log message
+				log("Following switch rejoin the network: " + msg.switchId.toString(), Verbosity.LOW);
 				//send back a register response
 				log("handleMessage: sending REGISTER_RESPONSE to switch " + msg.switchId.toString(), Verbosity.MEDIUM);
 				Message responseMessage = new Message(msg.switchId, "REGISTER_RESPONSE", switches.get(msg.switchId));
